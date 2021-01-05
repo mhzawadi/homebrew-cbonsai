@@ -23,6 +23,14 @@ AUR user `nichobi` has kindly packaged `cbonsai` in the AUR, called [cbonsai-git
 yay -S cbonsai-git
 ```
 
+### Homebrew
+
+`brew install mhzawadi/cbonsai/<formula>`
+
+Or `brew tap mhzawadi/cbonsai` and then `brew install <formula>`.
+
+`brew help`, `man brew` or check [Homebrew's documentation](https://docs.brew.sh).
+
 ### Manual
 
 You'll need to have a working `ncurses` library. If you're on a `Debian`-based system, you can install `ncurses` like so:
