@@ -1,4 +1,4 @@
-class HomebrewCbonsai < Formula
+class cbonsai < Formula
   desc "cbonsai is a bonsai tree generator, written in C using ncurses"
   homepage "https://github.com/mhzawadi/homebrew-cbonsai"
   url "https://github.com/mhzawadi/homebrew-cbonsai/archive/v0.0.1.zip"
