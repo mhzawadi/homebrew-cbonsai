@@ -1,8 +1,8 @@
 class Cbonsai < Formula
   desc "Console Bonsai is a bonsai tree generator, written in C using ncurses"
   homepage "https://github.com/mhzawadi/homebrew-cbonsai"
-  url "https://github.com/mhzawadi/homebrew-cbonsai/archive/v0.0.1.tar.gz"
-  sha256 "5161bdfab3f45f53686ea31e1157c3ae0c59b7bee7d2649f0e06ad5ee88d708c"
+  url "https://github.com/mhzawadi/homebrew-cbonsai/archive/v0.0.2.tar.gz"
+  sha256 "7dba90fa9a922aa6e750f92ef704178bb3fb52c06752dac34a3718eb4554d2e1"
   license "GPL-3.0"
 
   def install
