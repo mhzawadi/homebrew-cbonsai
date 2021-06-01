@@ -25,9 +25,9 @@ yay -S cbonsai-git
 
 ### Homebrew
 
-`brew install mhzawadi/cbonsai/<formula>`
+`brew install mhzawadi/cbonsai/cbonsai`
 
-Or `brew tap mhzawadi/cbonsai` and then `brew install <formula>`.
+Or `brew tap mhzawadi/cbonsai` and then `brew install cbonsai`.
 
 `brew help`, `man brew` or check [Homebrew's documentation](https://docs.brew.sh).
 
