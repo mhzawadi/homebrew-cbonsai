@@ -1,10 +1,18 @@
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 500
+#endif
+
 #include <stdlib.h>
-#include <ncurses.h>
+#include <curses.h>
+#include <locale.h>
 #include <panel.h>
 #include <getopt.h>
 #include <time.h>
 #include <string.h>
+#include <wchar.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <wordexp.h>
 
 enum branchType {trunk, shootLeft, shootRight, dying, dead};
 
@@ -19,12 +27,17 @@ struct config {
 	int baseType;
 	int seed;
 	int leavesSize;
+	int save;
+	int load;
+	int targetBranchCount;
 
 	double timeWait;
 	double timeStep;
 
 	char* message;
 	char* leaves[64];
+	char* saveFile;
+	char* loadFile;
 };
 
 struct ncursesObjects {
@@ -45,11 +58,49 @@ struct counters {
 	int shootCounter;
 };
 
-void finish(void) {
+int saveToFile(char* fname, int seed, int branchCount) {
+	FILE *fp = fopen(fname, "w");
+
+	if (!fp) {
+		printf("error: file was not opened properly for writing: %s\n", fname);
+		return 1;
+	}
+
+	fprintf(fp, "%d %d", seed, branchCount);
+	fclose(fp);
+
+	return 0;
+}
+
+// load seed and counter from file
+int loadFromFile(struct config *conf) {
+	FILE* fp = fopen(conf->loadFile, "r");
+
+	if (!fp) {
+		printf("error: file was not opened properly for reading: %s\n", conf->loadFile);
+		return 1;
+	}
+
+	int seed, targetBranchCount;
+	if (fscanf(fp, "%i %i", &seed, &targetBranchCount) != 2) {
+		printf("error: save file could not be read\n");
+		return 1;
+	}
+
+	conf->seed = seed;
+	conf->targetBranchCount = targetBranchCount;
+
+	fclose(fp);
+
+	return 0;
+}
+
+void finish(const struct config *conf, struct counters *myCounters) {
 	clear();
 	refresh();
 	endwin();	// delete ncurses screen
-	curs_set(1);
+	if (conf->save)
+		saveToFile(conf->saveFile, conf->seed, myCounters->branches);
 }
 
 void printHelp(const struct config *conf) {
@@ -75,6 +126,8 @@ void printHelp(const struct config *conf) {
 	printf("  -L, --life=INT         life; higher -> more growth (0-200) [default: %i]\n", conf->lifeStart);
 	printf("  -p, --print            print tree to terminal when finished\n");
 	printf("  -s, --seed=INT         seed random number generator\n");
+	printf("  -W, --save=FILE        save progress to file [default: %s]\n", conf->saveFile);
+	printf("  -C, --load=FILE        load progress from file [default: %s]\n", conf->loadFile);
 	printf("  -v, --verbose          increase output verbosity\n");
 	printf("  -h, --help             show help	\n");
 }
@@ -161,9 +214,9 @@ void drawWins(int baseType, struct ncursesObjects *objects) {
 void roll(int *dice, int mod) { *dice = rand() % mod; }
 
 // check for key press
-void checkKeyPress(int screensaver) {
-	if ((screensaver && wgetch(stdscr) != ERR) || (wgetch(stdscr) == 'q')) {
-		finish();
+void checkKeyPress(const struct config *conf, struct counters *myCounters) {
+	if ((conf->screensaver && wgetch(stdscr) != ERR) || (wgetch(stdscr) == 'q')) {
+		finish(conf, myCounters);
 		exit(0);
 	}
 }
@@ -296,7 +349,9 @@ void setDeltas(enum branchType type, int life, int age, int multiplier, int *ret
 char* chooseString(const struct config *conf, enum branchType type, int life, int dx, int dy) {
 	char* branchStr;
 
-	branchStr = malloc(32 * sizeof(char));
+	const unsigned int maxStrLen = 32;
+
+	branchStr = malloc(maxStrLen);
 	strcpy(branchStr, "?");	// fallback character
 
 	if (life < 4) type = dying;
@@ -324,8 +379,8 @@ char* chooseString(const struct config *conf, enum branchType type, int life, in
 		break;
 	case dying:
 	case dead:
-		strncpy(branchStr, conf->leaves[rand() % conf->leavesSize], sizeof(branchStr) - 1);
-		branchStr[sizeof(branchStr) - 1] = '\0';
+		strncpy(branchStr, conf->leaves[rand() % conf->leavesSize], maxStrLen - 1);
+		branchStr[maxStrLen - 1] = '\0';
 	}
 
 	return branchStr;
@@ -339,7 +394,7 @@ void branch(const struct config *conf, struct ncursesObjects *objects, struct co
 	int shootCooldown = conf->multiplier;
 
 	while (life > 0) {
-		checkKeyPress(conf->screensaver);
+		checkKeyPress(conf, myCounters);
 		life--;		// decrement remaining life counter
 		age = conf->lifeStart - life;
 
@@ -406,12 +461,22 @@ void branch(const struct config *conf, struct ncursesObjects *objects, struct co
 		// choose string to use for this branch
 		char *branchStr = chooseString(conf, type, life, dx, dy);
 
-		mvwprintw(objects->treeWin, y, x, "%s", branchStr);
+		// grab wide character from branchStr
+		wchar_t wc = 0;
+		mbstate_t *ps = 0;
+		mbrtowc(&wc, branchStr, 32, ps);
+
+		// print, but ensure wide characters don't overlap
+		if(x % wcwidth(wc) == 0)
+			mvwprintw(objects->treeWin, y, x, "%s", branchStr);
+
 		wattroff(objects->treeWin, A_BOLD);
 		free(branchStr);
 
-		// if live, show progress
-		if (conf->live) updateScreen(conf->timeStep);
+		// if live, update screen
+		// skip updating if we're still loading from file
+		if (conf->live && !(conf->load && myCounters->branches < conf->targetBranchCount))
+			updateScreen(conf->timeStep);
 	}
 }
 
@@ -422,7 +487,7 @@ void addSpaces(WINDOW* messageWin, int count, int *linePosition, int maxWidth) {
 
 		// add spaces up to width
 		for (int j = 0; j < count; j++) {
-			wprintw(messageWin, "%s", " ");
+			wprintw(messageWin, " ");
 			(*linePosition)++;
 		}
 	}
@@ -593,18 +658,21 @@ void init(const struct config *conf, struct ncursesObjects *objects) {
 	drawMessage(conf, objects, conf->message);
 }
 
-void growTree(const struct config *conf, struct ncursesObjects *objects) {
+void growTree(const struct config *conf, struct ncursesObjects *objects, struct counters *myCounters) {
 	int maxY, maxX;
 	getmaxyx(objects->treeWin, maxY, maxX);
 
-	struct counters myCounters  = { 0, 0, rand() };
+	// reset counters
+	myCounters->shoots = 0;
+	myCounters->branches = 0;
+	myCounters->shootCounter = rand();
 
 	if (conf->verbosity > 0) {
 		mvwprintw(objects->treeWin, 2, 5, "maxX: %03d, maxY: %03d", maxX, maxY);
 	}
 
 	// recursively grow tree trunk and branches
-	branch(conf, objects, &myCounters, maxY - 1, (maxX / 2), trunk, conf->lifeStart);
+	branch(conf, objects, myCounters, maxY - 1, (maxX / 2), trunk, conf->lifeStart);
 
 	// display changes
 	update_panels();
@@ -613,35 +681,72 @@ void growTree(const struct config *conf, struct ncursesObjects *objects) {
 
 // print stdscr to terminal window
 void printstdscr(void) {
-	int maxY, maxX, color, attribs;
+	int maxY, maxX;
 	getmaxyx(stdscr, maxY, maxX);
 
 	// loop through each character on stdscr
 	for (int y = 0; y < maxY; y++) {
 		for (int x = 0; x < maxX; x++) {
-			// get attributes of this character
-			color = mvwinch(stdscr, y, x) & A_COLOR;
-			attribs = (mvwinch(stdscr, y, x) & A_ATTRIBUTES) - color;
-			color /= 256;
+			// grab cchar_t from stdscr
+			cchar_t c;
+			mvwin_wch(stdscr, y, x, &c);
+
+			// grab wchar_t from cchar_t
+			wchar_t wch[128] = {0};
+			attr_t attrs;
+			short color_pair;
+			getcchar(&c, wch, &attrs, &color_pair, 0);
+
+			short fg;
+			short bg;
+			pair_content(color_pair, &fg, &bg);
 
 			// enable bold if needed
-			if ((attribs) == A_BOLD) printf("%s", "\033[1m");
-			else printf("%s", "\033[0m");
+			if(attrs & A_BOLD) printf("\033[1m");
+			else printf("\033[0m");
 
 			// enable correct color
-			if (color == 0) printf("%s", "\033[0m");
-			else if (color <= 7) printf("\033[3%im", color);
-			else if (color >= 8) printf("\033[9%im", color - 8);
+			if (fg == 0) printf("\033[0m");
+			else if (fg <= 7) printf("\033[3%him", fg);
+			else if (fg >= 8) printf("\033[9%him", fg - 8);
 
-			// print character
-			// mvwinch returns chtype which depends on machine, so we type cast
-			printf("%c", (char) mvwinch(stdscr, y, x));
+			printf("%ls", wch);
+
+			short clen = wcslen(wch);
+			short cwidth = 0;
+			for (int i = 0; i < clen; ++i)
+				cwidth += wcwidth(wch[i]);
+
+			if (cwidth > 1)
+				x += cwidth - 1;
 		}
 	}
-	printf("%s\n", "\033[0m");
+
+	printf("\033[0m\n");
+}
+
+// find homedir for default file location
+void expandWords(char **input) {
+	wordexp_t exp_result;
+	wordexp(*input, &exp_result, 0);
+
+	if (exp_result.we_wordc < 1) {
+		printf("error: could not parse filename: %s\n", *input);
+		return;
+	}
+
+	char* result = exp_result.we_wordv[0];
+
+	size_t bufsize = (strlen(result)*sizeof(char)) + sizeof(char);
+	*input = (char *) malloc(bufsize);
+	strncpy(*input, result, bufsize - 1);
+
+	wordfree(&exp_result);
 }
 
 int main(int argc, char* argv[]) {
+	setlocale(LC_ALL, "");
+
 	struct config conf = {
 		.live = 0,
 		.infinite = 0,
@@ -653,12 +758,17 @@ int main(int argc, char* argv[]) {
 		.baseType = 1,
 		.seed = 0,
 		.leavesSize = 0,
+		.save = 0,
+		.load = 0,
+		.targetBranchCount = 0,
 
 		.timeWait = 4,
 		.timeStep = 0.03,
 
 		.message = NULL,
 		.leaves = {0},
+		.saveFile = "~/.cache/cbonsai",
+		.loadFile = "~/.cache/cbonsai",
 	};
 
 	struct option long_options[] = {
@@ -674,6 +784,8 @@ int main(int argc, char* argv[]) {
 		{"life", required_argument, NULL, 'L'},
 		{"print", required_argument, NULL, 'p'},
 		{"seed", required_argument, NULL, 's'},
+		{"save", required_argument, NULL, 'W'},
+		{"load", required_argument, NULL, 'C'},
 		{"verbose", no_argument, NULL, 'v'},
 		{"help", no_argument, NULL, 'h'},
 		{0, 0, 0, 0}
@@ -686,7 +798,7 @@ int main(int argc, char* argv[]) {
 	// parse arguments
 	int option_index = 0;
 	int c;
-	while ((c = getopt_long(argc, argv, "lt:iw:Sm:b:c:M:L:ps:vh", long_options, &option_index)) != -1) {
+	while ((c = getopt_long(argc, argv, ":lt:iw:Sm:b:c:M:L:ps:C:W:vh", long_options, &option_index)) != -1) {
 		switch (c) {
 		case 'l':
 			conf.live = 1;
@@ -719,6 +831,12 @@ int main(int argc, char* argv[]) {
 		case 'S':
 			conf.live = 1;
 			conf.infinite = 1;
+
+			conf.save = 1;
+			expandWords(&conf.saveFile);
+			conf.load = 1;
+			expandWords(&conf.loadFile);
+
 			conf.screensaver = 1;
 			break;
 		case 'm':
@@ -771,12 +889,52 @@ int main(int argc, char* argv[]) {
 				exit(1);
 			}
 			break;
+		case 'W':
+			// skip argument if it's actually an option
+			if (optarg[0] == '-') optind -= 1;
+			else conf.saveFile = optarg;
+
+			conf.save = 1;
+			expandWords(&conf.saveFile);
+			break;
+		case 'C':
+			// skip argument if it's actually an option
+			if (optarg[0] == '-') optind -= 1;
+			else conf.loadFile = optarg;
+
+			conf.load = 1;
+			expandWords(&conf.loadFile);
+			break;
 		case 'v':
 			conf.verbosity++;
 			break;
 
-		// '?' represents unknown option. Treat it like --help.
+		// option has required argument, but it was not given
+		case ':':
+			switch (optopt) {
+			case 'W':
+				conf.save = 1;
+				expandWords(&conf.saveFile);
+				break;
+			case 'C':
+				conf.load = 1;
+				expandWords(&conf.loadFile);
+				break;
+			default:
+				printf("error: option requires an argument -- '%c'\n", optopt);
+				printHelp(&conf);
+				return 0;
+				break;
+			}
+			break;
+
+		// invalid option was given
 		case '?':
+			printf("error: invalid option -- '%c'\n", optopt);
+			printHelp(&conf);
+			return 0;
+			break;
+
 		case 'h':
 			printHelp(&conf);
 			return 0;
@@ -792,16 +950,22 @@ int main(int argc, char* argv[]) {
 		conf.leavesSize++;
 	}
 
+	if (conf.load)
+		loadFromFile(&conf);
+
 	// seed random number generator
 	if (conf.seed == 0) conf.seed = time(NULL);
 	srand(conf.seed);
 
+	struct counters myCounters;
+
 	do {
 		init(&conf, &objects);
-		growTree(&conf, &objects);
+		growTree(&conf, &objects, &myCounters);
+		if (conf.load) conf.targetBranchCount = 0;
 		if (conf.infinite) {
 			timeout(conf.timeWait * 1000);
-			checkKeyPress(conf.screensaver);
+			checkKeyPress(&conf, &myCounters);
 
 			// seed random number generator
 			srand(time(NULL));
@@ -809,18 +973,18 @@ int main(int argc, char* argv[]) {
 	} while (conf.infinite);
 
 	if (conf.printTree) {
-		finish();
+		finish(&conf, &myCounters);
 
 		// overlay all windows onto stdscr
 		overlay(objects.baseWin, stdscr);
 		overlay(objects.treeWin, stdscr);
-		overlay(objects.messageBorderWin, stdscr);
-		overlay(objects.messageWin, stdscr);
+		overwrite(objects.messageBorderWin, stdscr);
+		overwrite(objects.messageWin, stdscr);
 
 		printstdscr();
 	} else {
 		wgetch(objects.treeWin);
-		finish();
+		finish(&conf, &myCounters);
 	}
 
 	// free window memory
@@ -831,4 +995,3 @@ int main(int argc, char* argv[]) {
 
 	return 0;
 }
-

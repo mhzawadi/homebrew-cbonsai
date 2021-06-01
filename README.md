@@ -61,7 +61,7 @@ Options:
   -i, --infinite         infinite mode: keep growing trees
   -w, --wait=TIME        in infinite mode, wait TIME between each tree
                            generation [default: 4.00]
-  -S, --screensaver      screensaver mode; equivalent to -li and
+  -S, --screensaver      screensaver mode; equivalent to -liWC and
                            quit on any keypress
   -m, --message=STR      attach message next to the tree
   -b, --base=INT         ascii-art plant base to use, 0 is none
@@ -76,15 +76,40 @@ Options:
   -h, --help             show help
 ```
 
-## Modes
+## Tips
 
-### Static
+### Screensaver Mode
 
-`static` mode is the default: the user only sees the final, completed tree as a picture.
+Try out `-S/--screensaver` mode! As the help message states, it activates the `--live` and `--infinite` modes, quits upon any keypress, also saves/loads using the default cache file (`~/.cache/cbonsai`). This means:
 
-### Live
+* When you start `cbonsai` with `--screensaver`, a tree (including its seed and progress) is loaded from the default cache file.
+* When you quit `cbonsai` and `--screensaver` was on, the current tree being generated (including its seed and progress) is written to the default cache file.
 
-`live` mode displays each "step" of growth and waits a little bit, so that the user can watch the tree being grown step by step.
+This is helpful for a situations like the following: let's say you're growing a really big tree, really slowly:
+
+```bash
+$ cbonsai --screensaver --life 40 --multiplier 5 --time 20 --screensaver
+```
+
+Normally, when you quite `cbonsai` (e.g. by you hitting `q` or `ctrl-c`), you would lose all progress on that tree. However, by specifying `--screensaver`, the tree is automatically saved to a cache file upon quitting. The next time you run that exact same screensaver command:
+
+```bash
+$ cbonsai --screensaver --life 40 --multiplier 5 --time 20 --screensaver
+```
+
+The tree is automatically loaded from the cache file! And, since infinite mode is automatically turned on, it will finish the cached tree and just keep generating more. When you quit `cbonsai` again, the tree is once again written to the cache file for next time.
+
+Keep in mind that only the seed and number of branches are written to the cache file, so if you want to continue a previously generated tree, make sure you re-specify any other options you may have changed.
+
+### Add to `.bashrc`
+
+For a new bonsai tree every time you open a terminal, just add the following to the end of your `~/.bashrc`:
+
+```bash
+cbonsai -p
+```
+
+Notice it uses the print mode, so that you can immediately start typing commands below the bonsai tree.
 
 ## How it Works
 
@@ -96,4 +121,4 @@ The algorithm is tweaked to look best at the default size, so larger sized trees
 
 ## Inspiration
 
-This project wouldn't be here if it weren't for its *roots*! `cbonsai` is a newer version of  [bonsai.sh](https://gitlab.com/jallbrit/bonsai.sh), which was written in `bash` and was itself a port of [this bonsai tree generator](http://andai.tv/bonsai/) written in `javascript`.
+This project wouldn't be here if it weren't for its *roots*! `cbonsai` is a newer version of  [bonsai.sh](https://gitlab.com/jallbrit/bonsai.sh), which was written in `bash` and was itself a port of [this bonsai tree generator](https://avelican.github.io/bonsai/) written in `javascript`.
