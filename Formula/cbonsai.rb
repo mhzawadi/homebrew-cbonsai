@@ -6,6 +6,7 @@ class Cbonsai < Formula
   license "GPL-3.0"
 
   def install
+    system "export PKG_CONFIG_PATH=\"$PKG_CONFIG_PATH:/usr/local/Cellar/ncurses/6.2/lib/pkgconfig/\""
     system "make"
   end
 
