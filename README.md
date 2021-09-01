@@ -72,8 +72,11 @@ Options:
   -L, --life=INT         life; higher -> more growth (0-200) [default: 32]
   -p, --print            print tree to terminal when finished
   -s, --seed=INT         seed random number generator
+  -W, --save=FILE        save progress to file [default: ~/.cache/cbonsai]
+  -C, --load=FILE        load progress from file [default: ~/.cache/cbonsai]
   -v, --verbose          increase output verbosity
   -h, --help             show help
+
 ```
 
 ## Tips
