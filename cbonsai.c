@@ -12,7 +12,6 @@
 #include <wchar.h>
 #include <ctype.h>
 #include <unistd.h>
-#include <wordexp.h>
 
 enum branchType {trunk, shootLeft, shootRight, dying, dead};
 
@@ -57,6 +56,24 @@ struct counters {
 	int shoots;
 	int shootCounter;
 };
+
+void quit(struct config *conf, struct ncursesObjects *objects, int returnCode) {
+	// delete panels
+	del_panel(objects->basePanel);
+	del_panel(objects->treePanel);
+	del_panel(objects->messageBorderPanel);
+	del_panel(objects->messagePanel);
+
+	// delete windows
+	delwin(objects->baseWin);
+	delwin(objects->treeWin);
+	delwin(objects->messageBorderWin);
+	delwin(objects->messageWin);
+
+	free(conf->saveFile);
+	free(conf->loadFile);
+	exit(returnCode);
+}
 
 int saveToFile(char* fname, int seed, int branchCount) {
 	FILE *fp = fopen(fname, "w");
@@ -103,7 +120,7 @@ void finish(const struct config *conf, struct counters *myCounters) {
 		saveToFile(conf->saveFile, conf->seed, myCounters->branches);
 }
 
-void printHelp(const struct config *conf) {
+void printHelp(void) {
 	printf("Usage: cbonsai [OPTION]...\n");
 	printf("\n");
 	printf("cbonsai is a beautifully random bonsai tree generator.\n");
@@ -111,10 +128,10 @@ void printHelp(const struct config *conf) {
 	printf("Options:\n");
 	printf("  -l, --live             live mode: show each step of growth\n");
 	printf("  -t, --time=TIME        in live mode, wait TIME secs between\n");
-	printf("                           steps of growth (must be larger than 0) [default: %.2f]\n", conf->timeStep);
+	printf("                           steps of growth (must be larger than 0) [default: 0.03]\n");
 	printf("  -i, --infinite         infinite mode: keep growing trees\n");
 	printf("  -w, --wait=TIME        in infinite mode, wait TIME between each tree\n");
-	printf("                           generation [default: %.2f]\n", conf->timeWait);
+	printf("                           generation [default: 4.00]\n");
 	printf("  -S, --screensaver      screensaver mode; equivalent to -li and\n");
 	printf("                           quit on any keypress\n");
 	printf("  -m, --message=STR      attach message next to the tree\n");
@@ -122,12 +139,12 @@ void printHelp(const struct config *conf) {
 	printf("  -c, --leaf=LIST        list of comma-delimited strings randomly chosen\n");
 	printf("                           for leaves\n");
 	printf("  -M, --multiplier=INT   branch multiplier; higher -> more\n");
-	printf("                           branching (0-20) [default: %i]\n", conf->multiplier);
-	printf("  -L, --life=INT         life; higher -> more growth (0-200) [default: %i]\n", conf->lifeStart);
+	printf("                           branching (0-20) [default: 5]\n");
+	printf("  -L, --life=INT         life; higher -> more growth (0-200) [default: 32]\n");
 	printf("  -p, --print            print tree to terminal when finished\n");
 	printf("  -s, --seed=INT         seed random number generator\n");
-	printf("  -W, --save=FILE        save progress to file [default: %s]\n", conf->saveFile);
-	printf("  -C, --load=FILE        load progress from file [default: %s]\n", conf->loadFile);
+	printf("  -W, --save=FILE        save progress to file [default: $XDG_CACHE_HOME/cbonsai or $HOME/.cache/cbonsai]\n");
+	printf("  -C, --load=FILE        load progress from file [default: $XDG_CACHE_HOME/cbonsai]\n");
 	printf("  -v, --verbose          increase output verbosity\n");
 	printf("  -h, --help             show help	\n");
 }
@@ -214,11 +231,12 @@ void drawWins(int baseType, struct ncursesObjects *objects) {
 void roll(int *dice, int mod) { *dice = rand() % mod; }
 
 // check for key press
-void checkKeyPress(const struct config *conf, struct counters *myCounters) {
+int checkKeyPress(const struct config *conf, struct counters *myCounters) {
 	if ((conf->screensaver && wgetch(stdscr) != ERR) || (wgetch(stdscr) == 'q')) {
 		finish(conf, myCounters);
-		exit(0);
+		return 1;
 	}
+	return 0;
 }
 
 // display changes
@@ -386,7 +404,7 @@ char* chooseString(const struct config *conf, enum branchType type, int life, in
 	return branchStr;
 }
 
-void branch(const struct config *conf, struct ncursesObjects *objects, struct counters *myCounters, int y, int x, enum branchType type, int life) {
+void branch(struct config *conf, struct ncursesObjects *objects, struct counters *myCounters, int y, int x, enum branchType type, int life) {
 	myCounters->branches++;
 	int dx = 0;
 	int dy = 0;
@@ -394,7 +412,9 @@ void branch(const struct config *conf, struct ncursesObjects *objects, struct co
 	int shootCooldown = conf->multiplier;
 
 	while (life > 0) {
-		checkKeyPress(conf, myCounters);
+		if (checkKeyPress(conf, myCounters) == 1)
+			quit(conf, objects, 0);
+
 		life--;		// decrement remaining life counter
 		age = conf->lifeStart - life;
 
@@ -658,7 +678,7 @@ void init(const struct config *conf, struct ncursesObjects *objects) {
 	drawMessage(conf, objects, conf->message);
 }
 
-void growTree(const struct config *conf, struct ncursesObjects *objects, struct counters *myCounters) {
+void growTree(struct config *conf, struct ncursesObjects *objects, struct counters *myCounters) {
 	int maxY, maxX;
 	getmaxyx(objects->treeWin, maxY, maxX);
 
@@ -725,23 +745,40 @@ void printstdscr(void) {
 	printf("\033[0m\n");
 }
 
-// find homedir for default file location
-void expandWords(char **input) {
-	wordexp_t exp_result;
-	wordexp(*input, &exp_result, 0);
+char* createDefaultCachePath(void) {
+	char* result;
+	size_t envlen;
+	char* toAppend;
 
-	if (exp_result.we_wordc < 1) {
-		printf("error: could not parse filename: %s\n", *input);
-		return;
+	// follow XDG Base Directory Specification for default cache file path
+	const char* env_XDG_CACHE_HOME = getenv("XDG_CACHE_HOME");
+	if (env_XDG_CACHE_HOME && (envlen = strlen(env_XDG_CACHE_HOME))) {
+		toAppend = "/cbonsai";
+
+		// create result buffer
+		result = malloc(envlen + strlen(toAppend) + 1);
+		strncpy(result, env_XDG_CACHE_HOME, envlen);
+		strcpy(result + envlen, toAppend);
+		return result;
 	}
 
-	char* result = exp_result.we_wordv[0];
+	// if we don't have $XDG_CACHE_HOME, try $HOME
+	const char* env_HOME = getenv("HOME");
+	if (env_HOME && (envlen = strlen(env_HOME))) {
+		toAppend = "/.cache/cbonsai";
 
-	size_t bufsize = (strlen(result)*sizeof(char)) + sizeof(char);
-	*input = (char *) malloc(bufsize);
-	strncpy(*input, result, bufsize - 1);
+		// create result buffer
+		result = malloc(envlen + strlen(toAppend) + 1);
+		strncpy(result, env_HOME, envlen);
+		strcpy(result + envlen, toAppend);
+		return result;
+	}
 
-	wordfree(&exp_result);
+	// if we also don't have $HOME, just use ./cbonsai
+	toAppend = "cbonsai";
+	result = malloc(strlen(toAppend) + 1);
+	strcpy(result, toAppend);
+	return result;
 }
 
 int main(int argc, char* argv[]) {
@@ -767,8 +804,8 @@ int main(int argc, char* argv[]) {
 
 		.message = NULL,
 		.leaves = {0},
-		.saveFile = "~/.cache/cbonsai",
-		.loadFile = "~/.cache/cbonsai",
+		.saveFile = createDefaultCachePath(),
+		.loadFile = createDefaultCachePath(),
 	};
 
 	struct option long_options[] = {
@@ -807,11 +844,11 @@ int main(int argc, char* argv[]) {
 			if (strtold(optarg, NULL) != 0) conf.timeStep = strtod(optarg, NULL);
 			else {
 				printf("error: invalid step time: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			if (conf.timeStep < 0) {
 				printf("error: invalid step time: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'i':
@@ -821,11 +858,11 @@ int main(int argc, char* argv[]) {
 			if (strtold(optarg, NULL) != 0) conf.timeWait = strtod(optarg, NULL);
 			else {
 				printf("error: invalid wait time: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			if (conf.timeWait < 0) {
 				printf("error: invalid wait time: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'S':
@@ -833,9 +870,7 @@ int main(int argc, char* argv[]) {
 			conf.infinite = 1;
 
 			conf.save = 1;
-			expandWords(&conf.saveFile);
 			conf.load = 1;
-			expandWords(&conf.loadFile);
 
 			conf.screensaver = 1;
 			break;
@@ -846,7 +881,7 @@ int main(int argc, char* argv[]) {
 			if (strtold(optarg, NULL) != 0) conf.baseType = strtod(optarg, NULL);
 			else {
 				printf("error: invalid base index: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'c':
@@ -857,22 +892,22 @@ int main(int argc, char* argv[]) {
 			if (strtold(optarg, NULL) != 0) conf.multiplier = strtod(optarg, NULL);
 			else {
 				printf("error: invalid multiplier: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			if (conf.multiplier < 0) {
 				printf("error: invalid multiplier: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'L':
 			if (strtold(optarg, NULL) != 0) conf.lifeStart = strtod(optarg, NULL);
 			else {
 				printf("error: invalid initial life: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			if (conf.lifeStart < 0) {
 				printf("error: invalid initial life: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'p':
@@ -882,28 +917,38 @@ int main(int argc, char* argv[]) {
 			if (strtold(optarg, NULL) != 0) conf.seed = strtod(optarg, NULL);
 			else {
 				printf("error: invalid seed: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			if (conf.seed < 0) {
 				printf("error: invalid seed: '%s'\n", optarg);
-				exit(1);
+				quit(&conf, &objects, 1);
 			}
 			break;
 		case 'W':
 			// skip argument if it's actually an option
 			if (optarg[0] == '-') optind -= 1;
-			else conf.saveFile = optarg;
+			else {
+				free(conf.saveFile);
+				size_t bufsize = strlen(optarg) + 1;
+				conf.saveFile = malloc(bufsize);
+				strncpy(conf.saveFile, optarg, bufsize - 1);
+				conf.saveFile[bufsize - 1] = '\0';
+			}
 
 			conf.save = 1;
-			expandWords(&conf.saveFile);
 			break;
 		case 'C':
 			// skip argument if it's actually an option
 			if (optarg[0] == '-') optind -= 1;
-			else conf.loadFile = optarg;
+			else {
+				free(conf.loadFile);
+				size_t bufsize = strlen(optarg) + 1;
+				conf.loadFile = malloc(bufsize);
+				strncpy(conf.loadFile, optarg, bufsize - 1);
+				conf.loadFile[bufsize - 1] = '\0';
+			}
 
 			conf.load = 1;
-			expandWords(&conf.loadFile);
 			break;
 		case 'v':
 			conf.verbosity++;
@@ -914,15 +959,13 @@ int main(int argc, char* argv[]) {
 			switch (optopt) {
 			case 'W':
 				conf.save = 1;
-				expandWords(&conf.saveFile);
 				break;
 			case 'C':
 				conf.load = 1;
-				expandWords(&conf.loadFile);
 				break;
 			default:
 				printf("error: option requires an argument -- '%c'\n", optopt);
-				printHelp(&conf);
+				printHelp();
 				return 0;
 				break;
 			}
@@ -931,12 +974,12 @@ int main(int argc, char* argv[]) {
 		// invalid option was given
 		case '?':
 			printf("error: invalid option -- '%c'\n", optopt);
-			printHelp(&conf);
+			printHelp();
 			return 0;
 			break;
 
 		case 'h':
-			printHelp(&conf);
+			printHelp();
 			return 0;
 			break;
 		}
@@ -965,7 +1008,8 @@ int main(int argc, char* argv[]) {
 		if (conf.load) conf.targetBranchCount = 0;
 		if (conf.infinite) {
 			timeout(conf.timeWait * 1000);
-			checkKeyPress(&conf, &myCounters);
+			if (checkKeyPress(&conf, &myCounters) == 1)
+				quit(&conf, &objects, 0);
 
 			// seed random number generator
 			srand(time(NULL));
@@ -987,11 +1031,5 @@ int main(int argc, char* argv[]) {
 		finish(&conf, &myCounters);
 	}
 
-	// free window memory
-	delwin(objects.baseWin);
-	delwin(objects.treeWin);
-	delwin(objects.messageBorderWin);
-	delwin(objects.messageWin);
-
-	return 0;
+	quit(&conf, &objects, 0);
 }
