@@ -728,7 +728,7 @@ void printstdscr(void) {
 			// enable correct color
 			if (fg == 0) printf("\033[0m");
 			else if (fg <= 7) printf("\033[3%him", fg);
-			else if (fg >= 8) printf("\033[9%him", fg - 8);
+			else if (fg >= 8) printf("\033[9%im", fg - 8);
 
 			printf("%ls", wch);
 
