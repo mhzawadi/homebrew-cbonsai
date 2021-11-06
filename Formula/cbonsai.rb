@@ -9,7 +9,7 @@ class Cbonsai < Formula
 
   def install
     ENV["PKG_CONFIG_PATH"] = "$PKG_CONFIG_PATH:/usr/local/Cellar/ncurses/6.2/lib/pkgconfig/"
-    ENV["PKG_CONFIG_PATH"] .=":/opt/homebrew/Cellar/ncurses/6.2/lib/pkgconfig/"
+    ENV.append "PKG_CONFIG_PATH", ":/opt/homebrew/Cellar/ncurses/6.2/lib/pkgconfig/"
     system "make"
     bin.install "cbonsai"
   end
