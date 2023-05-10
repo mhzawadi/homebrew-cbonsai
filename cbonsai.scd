@@ -1,4 +1,4 @@
-cbonsai(1)
+cbonsai(6)
 
 # NAME
 
