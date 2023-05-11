@@ -15,6 +15,6 @@ class Cbonsai < Formula
   end
 
   test do
-    system "~/.local/bin/cbonsai", "-p"
+    system "${which cbonsai}", "-p"
   end
 end
