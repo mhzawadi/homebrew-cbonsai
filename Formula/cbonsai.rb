@@ -15,6 +15,6 @@ class Cbonsai < Formula
   end
 
   test do
-    system "$(which cbonsai)", "-p"
+    system bin/"cbonsai", "-p"
   end
 end
