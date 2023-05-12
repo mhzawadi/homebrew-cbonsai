@@ -6,6 +6,7 @@ class Cbonsai < Formula
   license "GPL-3.0"
   depends_on "ncurses"
   depends_on "pkg-config"
+  revision 1
 
   def install
     ENV["PKG_CONFIG_PATH"] = "$PKG_CONFIG_PATH:/usr/local/Cellar/ncurses/6.4/lib/pkgconfig/"
