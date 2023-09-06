@@ -1,3 +1,9 @@
+# This reop is now redundant
+
+You can now `brew install cbonsai` as its in the main brew repo, please see https://github.com/Homebrew/homebrew-core for updates
+
+---
+
 # cbonsai
 
 <img src="https://i.imgur.com/rnqJx3P.gif" align="right" width="400px">
